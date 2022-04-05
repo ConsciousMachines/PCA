@@ -1,42 +1,102 @@
+'''
 
+import cupy as cp
+cp.cuda.Device()
+
+x_cpu = np.array([1, 2, 3])
+x_gpu = cp.asarray(x_cpu)  # move the data to the current device.
+
+with cp.cuda.Device(0):
+    x_gpu_0 = cp.ndarray([1, 2, 3])  # create an array in GPU 0
+x_cpu = cp.asnumpy(x_gpu)  # move the array to the host.
+'''
+
+
+
+
+import zipfile
 import numpy as np
-import tkinter as tk
-from tkinter import ttk
-import os, pickle
-from PIL import Image, ImageTk
+import io
+import PIL.Image as im
 
-
-siz                 = 64     # picture length and width
-SAVE_DIR            = r'C:\Users\i_hat\Desktop\bastl\py\deep_larn\anime_PCA'
-IMG_DIR             = r'C:\Users\i_hat\Desktop\losable\anime_face_400\images'
 
 
 def generate_chunk_inds(total, sample_size): # generate indices for chunks of data 
     _inds = list(range(0, total, sample_size)) + [total]
-    inds = [(_inds[i], _inds[i+1]) for i in range(len(_inds)-1)]
+    inds = [(i, _inds[i], _inds[i+1]) for i in range(len(_inds)-1)]
     return inds
 
 
-def get_data_chunk(_start, _end, siz = siz, IMG_DIR = IMG_DIR): # retrieve data between a range of indices
-    _samples              = _end - _start
-    x_orig_r              = np.zeros([_samples, siz * siz])
-    x_orig_g              = np.zeros([_samples, siz * siz])
-    x_orig_b              = np.zeros([_samples, siz * siz])
-    for i, img in enumerate(os.listdir(IMG_DIR)[_start: _end]):
-        _img              = Image.open(os.path.join(IMG_DIR, img))
-        assert _img.mode  == 'RGB'
-        _data             = np.array(_img.resize((siz, siz), Image.ANTIALIAS))
-        x_orig_r[i,:]     = _data[:,:,0].flatten()
-        x_orig_g[i,:]     = _data[:,:,1].flatten()
-        x_orig_b[i,:]     = _data[:,:,2].flatten()
-    return x_orig_r, x_orig_g, x_orig_b
+def get_sample_weights(inds): # get the weights of the samples: ni / n  
+    n = inds[-1][-1]
+    return [(end - start) / n for _, start, end in inds]
 
 
-def get_chunk_cov(x, mu, std, n):
-    _x = (x - mu) / std
-    return _x.T @ _x / n
+def get_data_chunk(start, end, files, siz):
+    x                  = np.zeros([end - start, siz * siz * 3], dtype = np.uint8)
+    for i in range(start, end):
+        one_file       = files[i]
+        orig_im        = im.open(io.BytesIO(zip.open(one_file).read()))
+        d              = orig_im.size[0]
+        crop_im        = orig_im.crop((d / 3, d / 3, 2 * d / 3, 2 * d / 3)).resize([siz,siz])
+        x[i - start,:] = np.array(crop_im, dtype = np.uint8).flatten()
+    return x
 
 
+siz            = 128
+path           = r'C:\Users\i_hat\Desktop\losable\anime_aligned.zip'
+SAVE_DIR       = r'C:\Users\i_hat\Desktop\bastl\py\deep_larn\anime_PCA'
+
+zip            = zipfile.ZipFile(path)
+files          = zip.namelist()
+
+_sample_size   = 10_000
+inds           = generate_chunk_inds(len(files), _sample_size)
+w              = get_sample_weights(inds)
+
+
+# S T E P   1   :   G A T H E R   T H E   M E A N S
+
+mean           = np.zeros([1, siz*siz*3])
+for i, start, end in inds:
+    x          = get_data_chunk(start, end, files, siz)
+    mean      += w[i] * np.mean(x, 0, keepdims = True)
+
+
+
+
+
+
+
+
+# S T E P   2   :   G A T H E R   T H E   S T D S
+
+var             = np.zeros([1, siz*siz*3])
+for i, start, end in inds:
+    x           = get_data_chunk(start, end, files, siz)
+    var        += w[i] * np.mean(np.square(x - mean), axis = 0, keepdims = True)
+std             = np.sqrt(var)
+std[std == 0.0] = 1.0
+
+
+
+
+
+
+
+# S T E P   3   :   C O V A R I A N C E 
+
+cov             = np.zeros([siz*siz*3, siz*siz*3])
+for start, end in inds:
+    x           = get_data_chunk(start, end, files, siz)
+    _x          = (x - mean) / std # standardize the data using the mean and std
+    cov        += _x.T @ _x / inds[-1][-1]
+
+
+
+
+
+# S T E P   4   :   P C A
 def eig(S):
     va, vc          = np.linalg.eigh(S)  
     _sorted         = np.argsort(-va) # sorting them in decrasing order
@@ -44,47 +104,50 @@ def eig(S):
     vc              = vc[:, _sorted]
     return (va, vc)
 
+_, vecs = eig(cov) # TODO: use cupy
 
-if False:
-
-    # we already gathered the means and the stds before. 
-    vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'rb'))
-    mu                                                         = np.concatenate([mu_r, mu_g, mu_b], 1)
-    std                                                        = np.concatenate([std_r, std_g, std_b], 1)
-
-    # S T E P   3   :   C O V A R I A N C E 
-    inds           = generate_chunk_inds(len(os.listdir(IMG_DIR)), 10_000)
-    my_cov         = np.zeros([siz*siz*3, siz*siz*3])
-    for start, end in inds:
-        data_chunk = get_data_chunk(start, end)
-        x          = np.concatenate([data_chunk[0], data_chunk[1], data_chunk[2]], 1)
-        my_cov    += get_chunk_cov(x, mu, std, inds[-1][-1])
-
-    # S T E P   4   :   P C A
-    _, vecs = eig(my_cov)
-    #pickle.dump([mu, std, vecs], open(os.path.join(SAVE_DIR, 'anime_400_PCA_4.pkl'), 'wb'))
-    #pickle.dump(my_cov, open(os.path.join(SAVE_DIR, 'anime_400_PCA_4_my_cov.pkl'), 'wb'))
-
-    #==================== start experimetn - apparently i did it correct this time. 
-    #my_cov = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_4_my_cov.pkl'), 'rb'))
-    #m1 = np.ones([siz*siz, siz*siz])
-    #m0 = np.zeros([siz*siz, siz*siz])
-    #my_cov = my_cov * np.concatenate([
-    #    np.concatenate([m1,m0,m0]),
-    #    np.concatenate([m0,m1,m0]),
-    #    np.concatenate([m0,m0,m1]),
-    #], 1)
-    #_, vecs = eig(my_cov)
-    #==================== end experimetn
+pickle.dump([vecs, mean, std], open(os.path.join(SAVE_DIR, 'anime_100gb_PCA_6.pkl'), 'wb'))
 
 
-mu, std, vecs = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_4.pkl'), 'rb'))
-components          = 200
-U                   = vecs[:, range(components)]       
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import numpy as np
+import tkinter as tk
+from tkinter import ttk
+import zipfile, io, os, pickle
+from PIL import Image, ImageTk
+
+
+components = 200
+vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'rb'))
+UR                  = vecsr[:, range(components)]       
+UG                  = vecsg[:, range(components)]       
+UB                  = vecsb[:, range(components)] 
+for i in range(components): # if v1 and v2 are opposite, then sign(dot(v1,v2))*v2 will face the same. 
+    UG[:,i] *= np.sign(np.dot(UR[:,i], UG[:,i])) # we know the vecs have similar features but may point in diff directions.
+    UB[:,i] *= np.sign(np.dot(UG[:,i], UB[:,i])) # so flip them if they differ (if dot = -1)
+
+
+U                   = np.stack([UR.T, UG.T, UB.T]) # numpy multiplies an array of matrices as [n, m] @ [matrices, m, k]
+std                 = np.stack([std_r, std_g, std_b]) # so we can do code : [1,200] ;; code @ U 
+mu                  = np.stack([mu_r, mu_g, mu_b])
+
 
 
 def from_latent(z, add_mean = True): 
-    x = z @ U.T # comes back from latent space 
+    x = z @ U # comes back from latent space 
     if add_mean:
         return x * std + mu # when we transpose from the latent space, we need to unstandardize it
     return x * std
@@ -93,7 +156,9 @@ def from_latent(z, add_mean = True):
 class Viewer():
     def reconstruct(self):
         code = np.array([[i.get() for i in self.vals]])
-        self.x = np.clip(from_latent(code, self.add_mean),0,255).astype(np.uint8).reshape([3,siz,siz]).transpose([1,2,0])
+        self.x = np.clip(from_latent(code, self.add_mean), 0.0, 255.0).astype(np.uint8).transpose([1,2,0]).reshape([siz,siz,3]) 
+        # WRONG BUT COOL: i think this visualizes the 3 vectors independently?
+        #self.x = np.clip(from_latent(code, self.add_mean), 0.0, 255.0).astype(np.uint8).reshape([siz,siz,3]) 
 
     def refresh(self, e):
         self.reconstruct()
@@ -108,8 +173,8 @@ class Viewer():
         elif e.char                                      == 'a':      # toggle mean option 
             self.add_mean                                = not self.add_mean
         elif e.char                                      == 't':      # randomize
-            num_feats                                    = min(self.num_sliders, 40) # dont do all the features as most are noise
-            rand                                         = np.clip(np.random.randn(num_feats) * 6.0, -50.0, 50.0)
+            num_feats                                    = min(self.num_sliders, 50) # dont do all the features as most are noise
+            rand                                         = np.clip(np.random.randn(num_feats) * 2.0, -50.0, 50.0)
             for i in range(num_feats):
                 self.vals[i].set(rand[i])
         elif e.char                                      == 'e':      # remember the encoding 
@@ -154,33 +219,3 @@ class Viewer():
 
 v                                                 = Viewer()
 v.start(components)
-
-
-
-
-
-import matplotlib.pyplot as plt
-from matplotlib import animation
-
-
-steps = 30
-frames = np.zeros([steps * len(v.remember_vecs), components])
-
-for i in range(len(v.remember_vecs)):
-    v1 = v.remember_vecs[i]
-    v2 = v.remember_vecs[(i+1) % len(v.remember_vecs)]
-    dv = v2 - v1
-    for j in range(steps):
-        frames[i*steps + j,:] = v1 + dv * (float(j) / steps)
-
-fig = plt.figure()
-_ = plt.axis('off')
-images = []
-for c in range(frames.shape[0]):
-    morphed = np.clip(from_latent(frames[[c],:]),0,255).astype(np.uint8).reshape([3,siz,siz]).transpose([1,2,0])
-    images.append([plt.imshow(morphed, animated=True)])
-
-ani = animation.ArtistAnimation(fig, images, interval=30)
-ani.save(os.path.join(SAVE_DIR, 'ani.mp4'), writer = animation.FFMpegWriter(fps = 60))
-ani.save(os.path.join(SAVE_DIR, 'ani.mp4'), writer = animation.FFMpegWriter(fps = 60))
-

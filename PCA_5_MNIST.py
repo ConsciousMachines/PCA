@@ -4,10 +4,9 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk
 import matplotlib.pyplot as plt
-from PIL import Image, ImageTk
 
 
-f = gzip.open(r'C:\Users\pwnag\Desktop\sup\nielsen\mnist.pkl.gz', 'rb')
+f = gzip.open(r'C:\Users\i_hat\Desktop\losable\mnist.pkl.gz', 'rb')
 _tr, _va, _te = pickle.load(f, encoding = "latin1")
 f.close()
 tr_x = [np.reshape(x, (784, 1)) for x in _tr[0]] # reshape x's

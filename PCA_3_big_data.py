@@ -1,40 +1,8 @@
 
 
-
 # B I G   D A D A -----------------------------------------------------------------------------------------------
 # B I G   D A D A -----------------------------------------------------------------------------------------------
-'''
-cp.cuda.Device()
 
-x_cpu = np.array([1, 2, 3])
-x_gpu = cp.asarray(x_cpu)  # move the data to the current device.
-
-with cp.cuda.Device(0):
-    x_gpu_0 = cp.ndarray([1, 2, 3])  # create an array in GPU 0
-x_cpu = cp.asnumpy(x_gpu)  # move the array to the host.
-'''
-
-
-
-'''
-path = r'C:\Users\pwnag\Downloads\archive.zip'
-zip = zipfile.ZipFile(path)
-
-files = zip.namelist()
-for i in range(len(files)):
-    one_file = files[i]
-
-len(files)
-#with zip.open('train_labels.csv') as f:
-#onp.array(im.open(io.BytesIO(zip.open(tests[i]).read())), dtype = onp.uint8)
-
-files[100000]
-soy = np.array(Image.open(io.BytesIO(zip.open(files[2]).read())), dtype = np.uint8)
-soy.shape
-plt.imshow(soy)
-plt.show()
-# TODO: crop images 
-'''
 
 # i think that if we have n samples and m features, and n is large, our cov matrix is m x m, 
 # and the process can be split up into chunks where we take b = n / 10 at a time.
@@ -78,8 +46,6 @@ plt.show()
 
 
 
-
-
 import numpy as np
 import tkinter as tk
 from tkinter import ttk
@@ -88,8 +54,8 @@ from PIL import Image, ImageTk
 
 
 siz                 = 64     # picture length and width
-IMG_DIR             = r'C:\Users\pwnag\Desktop\sup\deep_larn\anime_face_400\images'
-SAVE_DIR            = r'C:\Users\pwnag\Desktop\sup\deep_larn\anime_PCA'
+SAVE_DIR            = r'C:\Users\i_hat\Desktop\bastl\py\deep_larn\anime_PCA'
+IMG_DIR             = r'C:\Users\i_hat\Desktop\losable\anime_face_400\images'
 
 
 def generate_chunk_inds(total, sample_size): # generate indices for chunks of data 
@@ -148,6 +114,7 @@ def eig(S):
 
 
 if False:
+
     # S T E P   1   :   G A T H E R   T H E   M E A N S
     chunk_means = []
     inds = generate_chunk_inds(63_565, 10_000)
@@ -202,97 +169,106 @@ if False:
         cov_b += chunk_covs[i][2]
 
     del chunk_covs, chunk_means, chunk_mses, inds, w, data_chunk, var_r, var_g, var_b, start, end
-    params = [cov_r, cov_g, cov_b, mu_r, mu_g, mu_b, std_r, std_g, std_b]
-    pickle.dump(params, open(os.path.join(SAVE_DIR, 'anime_400.pkl'), 'wb'))
-
 
     # S T E P   4   :   P C A
     _, vecsr = eig(cov_r)
     _, vecsg = eig(cov_g)
     _, vecsb = eig(cov_b)
 
-    params = [vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b]
-    pickle.dump(params, open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'wb'))
+    pickle.dump([vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b], open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'wb'))
 
 
-vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'rb'))
 components = 200
+vecsr, vecsg, vecsb, mu_r, mu_g, mu_b, std_r, std_g, std_b = pickle.load(open(os.path.join(SAVE_DIR, 'anime_400_PCA_3.pkl'), 'rb'))
 UR                  = vecsr[:, range(components)]       
 UG                  = vecsg[:, range(components)]       
 UB                  = vecsb[:, range(components)] 
+for i in range(components): # if v1 and v2 are opposite, then sign(dot(v1,v2))*v2 will face the same. 
+    UG[:,i] *= np.sign(np.dot(UR[:,i], UG[:,i])) # we know the vecs have similar features but may point in diff directions.
+    UB[:,i] *= np.sign(np.dot(UG[:,i], UB[:,i])) # so flip them if they differ (if dot = -1)
 
 
-def unstand(x, add_mean = True): # when we transpose from the latent space, we need to unstandardize it
-    x1, x2, x3 = x 
+U                   = np.stack([UR.T, UG.T, UB.T]) # numpy multiplies an array of matrices as [n, m] @ [matrices, m, k]
+std                 = np.stack([std_r, std_g, std_b]) # so we can do code : [1,200] ;; code @ U 
+mu                  = np.stack([mu_r, mu_g, mu_b])
+
+
+
+
+def from_latent(z, add_mean = True): 
+    x = z @ U # comes back from latent space 
     if add_mean:
-        return (x1 * std_r + mu_r, x2 * std_g + mu_g, x3 * std_b + mu_b)
-    return (x1 * std_r, x2 * std_g, x3 * std_b)
-
-def unproject(z): # comes back from latent space 
-    z1, z2, z3 = z
-    return (z1 @ UR.T, z2 @ UG.T, z3 @ UB.T)
-
-def to_uint8(x): # prepare picture for display. i min-max scaled it. not sure if this is good but it gives cool visuals. 
-    #x = x - np.min(x)
-    #x = 255.0 * x / np.max(x)
-    x = np.clip(x,0,255)
-    return x.astype(np.uint8)
+        return x * std + mu # when we transpose from the latent space, we need to unstandardize it
+    return x * std
 
 
-
-
-class Soy():
-    def _reset(self):
-        [self.vals[i].set(0.0) for i in range(len(self.vals))]
-        self.refresh(0)
-
-    def _change_mean_option(self):
-        self.add_mean = not self.add_mean
-        self.refresh(0)
-
+class Viewer():
     def reconstruct(self):
-        self.proj = np.array([[i.get() for i in self.vals]])
-        self.x = [to_uint8(i) for i in unstand(unproject((self.proj,self.proj,self.proj)), self.add_mean)]
+        code = np.array([[i.get() for i in self.vals]])
+        self.x = np.clip(from_latent(code, self.add_mean), 0.0, 255.0).astype(np.uint8).transpose([1,2,0]).reshape([siz,siz,3]) 
+        # WRONG BUT COOL: i think this visualizes the 3 vectors independently?
+        #self.x = np.clip(from_latent(code, self.add_mean), 0.0, 255.0).astype(np.uint8).reshape([siz,siz,3]) 
 
     def refresh(self, e):
         self.reconstruct()
-        self.p = np.concatenate([np.expand_dims(self.x[0][:,:],2),np.expand_dims(self.x[1][:,:],2),np.expand_dims(self.x[2][:,:],2)],axis=2).squeeze().reshape([siz,siz,3])
-        self.photo = ImageTk.PhotoImage(image = Image.fromarray(self.p)) # https://stackoverflow.com/questions/58411250/photoimage-zoom
+        self.photo = ImageTk.PhotoImage(image = Image.fromarray(self.x)) # https://stackoverflow.com/questions/58411250/photoimage-zoom
         self.photo = self.photo._PhotoImage__photo.zoom(8)
         self.canvas_area.create_image(0,0,image = self.photo, anchor=tk.NW)
         self.canvas_area.update()
 
-    def start(self):
-        self.add_mean                               = True
-        root                                        = tk.Tk()
-        menu_left                                   = tk.Canvas(root, width=150, height = 400, bg = 'black')
-        menu_left.grid(row                          = 0, column=0, sticky = 'nsew')
-        sf                                          = ttk.Frame(menu_left)
-        sf.bind("<Configure>",   lambda e: menu_left.configure(scrollregion = menu_left.bbox("all")))
-        root.bind('<Up>'     ,   lambda x: menu_left.yview_scroll(-10, "units"))
-        root.bind('<Down>'   ,   lambda x: menu_left.yview_scroll(10, "units")) 
-        root.bind("<Escape>" ,   lambda x: root.destroy())
-        root.bind('r',           lambda x: self._reset())
-        root.bind('a',           lambda x: self._change_mean_option())
-        menu_left.create_window((0, 0), window      =sf, anchor="nw")
-
-        self.vals                                   = [tk.DoubleVar() for i in range(components)]
-        labs                                        = [ttk.Label(sf, text=f"{i}") for i in range(components)]
-        slds                                        = [None for i in range(components)]
-        for i in range(components):
-            slds[i]                                 = ttk.Scale(sf, from_ = -50, to = 50, orient = 'horizontal', variable = self.vals[i], command = self.refresh)
-            slds[i].grid(column                     = 1, row = i, columnspan = 1, sticky = 'nsew')
-            labs[i].grid(column                     = 0, row = i, columnspan = 1, sticky = 'nsew')
-
-        self.canvas_area                            = tk.Canvas(root, width=540, height=540, bg = 'black')
-        self.canvas_area.grid(row                   =0, column=1, sticky = 'nsew') 
-        root.grid_rowconfigure(1, weight            =1)
-        root.grid_columnconfigure(1, weight         =1)
+    def key_press(self, e):
+        if e.char                                        == 'r':      # reset sliders to 0
+            [self.vals[i].set(0.0) for i in range(len(self.vals))]
+        elif e.char                                      == 'a':      # toggle mean option 
+            self.add_mean                                = not self.add_mean
+        elif e.char                                      == 't':      # randomize
+            num_feats                                    = min(self.num_sliders, 50) # dont do all the features as most are noise
+            rand                                         = np.clip(np.random.randn(num_feats) * 2.0, -50.0, 50.0)
+            for i in range(num_feats):
+                self.vals[i].set(rand[i])
+        elif e.char                                      == 'e':      # remember the encoding 
+            self.remember_vecs.append(np.array([[i.get() for i in self.vals]]))
+        elif e.keysym                                    == 'Escape': # quit 
+            return self.root.destroy()
+        elif e.keysym                                    == 'Down':   # scroll down in slider menu
+            self.menu_left.yview_scroll(10, "units")
+        elif e.keysym                                    == 'Up':     # scroll up in slider menu
+            self.menu_left.yview_scroll(-10, "units")
+        else:
+            print(e)
         self.refresh(0)
-        root.mainloop()
 
-soy                                                 = Soy()
-soy.start()
+    def start(self, num_sliders                          = 100):
+        self.root                                        = tk.Tk()
+        self.menu_left                                   = tk.Canvas(self.root, width=150, height = 400, bg = 'black')
+        self.menu_left.grid(row                          = 0, column=0, sticky = 'nsew')
+        sf                                               = ttk.Frame(self.menu_left)
+        sf.bind("<Configure>",  lambda e: self.menu_left.configure(scrollregion = self.menu_left.bbox("all")))
+        self.root.bind('<Key>', lambda x: self.key_press(x))
+        self.menu_left.create_window((0, 0), window      =sf, anchor="nw")
+
+        self.remember_vecs                               = []
+        self.num_sliders                                 = num_sliders
+        self.add_mean                                    = True
+        self.vals                                        = [tk.DoubleVar() for i in range(self.num_sliders)]
+        labs                                             = [ttk.Label(sf, text=f"{i}") for i in range(self.num_sliders)]
+        slds                                             = [None for i in range(self.num_sliders)]
+        for i in range(self.num_sliders):
+            slds[i]                                      = ttk.Scale(sf, from_ = -50.0, to = 50.0, orient = 'horizontal', variable = self.vals[i], command = self.refresh)
+            slds[i].grid(column                          = 1, row = i, columnspan = 1, sticky = 'nsew')
+            labs[i].grid(column                          = 0, row = i, columnspan = 1, sticky = 'nsew')
+
+        self.canvas_area                                 = tk.Canvas(self.root, width=540, height=540, bg = 'black')
+        self.canvas_area.grid(row                        = 0, column=1, sticky = 'nsew') 
+        self.root.grid_rowconfigure(1, weight            = 1)
+        self.root.grid_columnconfigure(1, weight         = 1)
+        self.refresh(0)
+        self.root.mainloop()
+
+
+
+v                                                 = Viewer()
+v.start(components)
 
 
 '''
@@ -524,5 +500,34 @@ I had a question before:
 the answer is given to us implicitly in the eigenvectors. consider the eigenvector for hair, and all the pixels that light up
 when its value is high. those all have positive weights, the rest of the weights are zero. this tells us that all those pixels
 have similar covariance 
+
+
+After losing everything on my computer after downloading a GNU tool, I come back to start fresh from this project. 
+
+By mistake I managed to somehow plot the movements of 3 separate channels' eigenvectors. sometimes 2 moved together and 1 in the opposite direction!
+
+although they catch similar features, seems the eigenvalues may be opposite. then their combo will only move 1/3 as much, as they'll cancel out.
+- now that i think about it, this shows us the 3 eigenvectors are similar but nowhere the same. heads tilt different amounts. so concatenated, 
+these will be very bad. in fact i think thats why we get the trippy colors! because the color channels disagree so we always get 1 channel going in the other direction.
+- ok i fixed the problem by flipping the sign of the eigenvector if they are opposite, thus aligning each triple. 
+- some features still differ by different amounts. that causes discoloration. 
+
+Not much left to do at this point - we can either view each color channel's eigenvector separately, or BW, or assume BIG DATA will average out the differences.
+Actually the only real way to get rid of this is to do PCA on the combined 12k dimensional vectors. 
+
+Also you can easily tell that one eigenvector has gone berserk when the picture becomes too trippy in color. 
+
+Either way, it is a heckin lot better now. 
+
+I guess the true way to look at features is using the 12k vectors. but those get distracted by colors. but color is a feature. 
+so what is the best representation? i think BW for features, and 12k for features with colors in mind. 
+
+after all that, i think the first candidate for a real anime face creator is the 12k PCA. 
+
+after even more thinking i think the 12k version is the only serious one. BW is too simple, colorful is too trippy. 12k is actually
+somewhat practical and looks good. for PCA_2,3 we can't really average the eigenvectors as that would just align all the changes 
+to be the same for each color channel, which kinda defeats the pruposes of there being 3 of them. So 12k, having tamed color channels,
+is the only usable one. 
+
 
 '''

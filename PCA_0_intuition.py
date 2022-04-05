@@ -25,9 +25,9 @@ s = make_scale_matrix([2, 1])
 r = make_rotation_matrix(45)
 m = r @ s # scale first, then rotate?
 x = m @ _x
-#plt.scatter(x[0,:], x[1,:])
-#plt.axis('equal')
-#plt.show()
+plt.scatter(x[0,:], x[1,:])
+plt.axis('equal')
+plt.show()
 
 
 # get the correlation matrix of the data 
